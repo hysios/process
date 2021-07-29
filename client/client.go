@@ -34,16 +34,17 @@ func Open(opt *ClientOption) (*Client, error) {
 	return &cli, nil
 }
 
-func (cli *Client) StartProcess(name string, args []string, env []string, dir string) (*process.Process, error) {
+func (cli *Client) StartProcess(name string, fullbin string, args []string, env []string, dir string) (*process.Process, error) {
 	var (
 		reply process.Process
 		err   error
 	)
 	if err = cli.Call("Server.StartProcess", process.StartReq{
-		Name: name,
-		Args: args,
-		Env:  env,
-		Dir:  dir,
+		Name:   name,
+		Binary: fullbin,
+		Args:   args,
+		Env:    env,
+		Dir:    dir,
 	}, &reply); err != nil {
 		return nil, err
 	}
@@ -75,6 +76,13 @@ func (cli *Client) LoadProcesses(filename string) error {
 
 func (cli *Client) StopProcess(name string) error {
 	if err := cli.Call("Server.StopProcess", name, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (cli *Client) RemoveProcess(name string) error {
+	if err := cli.Call("Server.RemoveProcess", name, nil); err != nil {
 		return err
 	}
 	return nil

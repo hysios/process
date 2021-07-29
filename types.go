@@ -5,10 +5,11 @@ import (
 )
 
 type StartReq struct {
-	Name string
-	Args []string
-	Env  []string
-	Dir  string
+	Name   string
+	Binary string
+	Args   []string
+	Env    []string
+	Dir    string
 }
 
 func init() {

@@ -15,8 +15,8 @@ type Process struct {
 	ErrorFile  string
 	PidFile    string
 	Name       string
+	Binary     string
 	Dir        string
-	Cmd        string
 	Args       []string
 	daemon     atomic.Int32
 	cmd        *exec.Cmd
@@ -40,7 +40,8 @@ func Processes() ([]*Process, error) {
 
 func NewProcess(name string, cmd *exec.Cmd, proc *process.Process) *Process {
 	p := &Process{Name: name, cmd: cmd, Process: proc}
-	p.Args = cmd.Args
+	p.Args = cmd.Args[1:]
+	p.Binary = cmd.Path
 	p.daemon.Inc()
 
 	return p

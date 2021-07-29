@@ -41,7 +41,7 @@ type StartReq struct {
 }
 
 func (s *Server) StartProcess(req process.StartReq, reply *process.Process) error {
-	process, err := s.manager.StartProcess(req.Name, req.Args, req.Env, req.Dir)
+	process, err := s.manager.StartProcess(req.Name, req.Binary, req.Args, req.Env, req.Dir)
 	if err != nil {
 		return err
 	}
@@ -51,6 +51,15 @@ func (s *Server) StartProcess(req process.StartReq, reply *process.Process) erro
 
 func (s *Server) StopProcess(name string, _ *int) error {
 	err := s.manager.StopProcess(name)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) RemoveProcess(name string, _ *int) error {
+	err := s.manager.RemoveProcess(name)
 	if err != nil {
 		return err
 	}

@@ -40,8 +40,21 @@ func TestNewManager(t *testing.T) {
 	go manger.Run()
 
 	assert.NotNil(t, manger)
-	proc, err := manger.StartProcess("ls", []string{"-la"}, nil, "ls")
+	proc, err := manger.StartProcess("ls", "", []string{"-la"}, nil, "ls")
 	assert.NoError(t, err)
 	assert.NotNil(t, proc)
 	t.Logf("process status %s", proc.Status())
+}
+
+func TestManager_StartProcess(t *testing.T) {
+	manager := NewManager(&ManagerConfig{
+		WorkerDir: "./tmp",
+	})
+
+	proc, err := manager.StartProcess("ls", "", []string{"-la"}, nil, ".")
+	assert.NoError(t, err)
+	assert.NotNil(t, proc)
+	t.Logf("process status %s", proc.Status())
+	_, ok := manager.getProcess("ls")
+	assert.True(t, ok)
 }

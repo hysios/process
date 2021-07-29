@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/hysios/log"
+	"github.com/hysios/process"
 	"github.com/hysios/process/client"
 	"github.com/olekukonko/tablewriter"
 
@@ -17,6 +19,7 @@ var (
 	run     bool
 	status  bool
 	stop    bool
+	remove  bool
 )
 
 func init() {
@@ -24,7 +27,7 @@ func init() {
 	flag.BoolVar(&run, "run", false, "Run cmd")
 	flag.BoolVar(&status, "status", false, "List All Processes Status")
 	flag.BoolVar(&stop, "stop", false, "Stop Process running")
-
+	flag.BoolVar(&remove, "remove", false, "Remove Process")
 }
 
 func main() {
@@ -43,9 +46,24 @@ func main() {
 				log.Infof("run: %s", flag.Args())
 
 				if len(flag.Args()) > 0 {
-					var args = flag.Args()
+					var (
+						args    = flag.Args()
+						name    = args[0]
+						fullbin string
+					)
 
-					proc, err := cli.StartProcess(args[0], args[1:], nil, args[0])
+					if process.IsRelPath(name) {
+						fullbin, err = filepath.Abs(name)
+						if err != nil {
+							log.Fatalf("invalid abs path %s", err)
+						}
+						name = filepath.Base(fullbin)
+					} else if filepath.IsAbs(name) {
+						fullbin = name
+						name = filepath.Base(fullbin)
+					}
+
+					proc, err := cli.StartProcess(name, fullbin, args[1:], nil, name)
 					if err != nil {
 						log.Fatalf("start process %s", err)
 					}
@@ -59,16 +77,6 @@ func main() {
 				}
 				printTable(status)
 			}
-		case status:
-			{
-
-				status, err := cli.AllStatus()
-				if err != nil {
-					log.Fatalf("all status %s", err)
-				}
-				printTable(status)
-				// log.Infof("all status %s", status)
-			}
 		case stop:
 			log.Infof("stop %s", flag.Args()[0])
 			if err := cli.StopProcess(flag.Args()[0]); err != nil {
@@ -80,6 +88,26 @@ func main() {
 				log.Fatalf("all status %s", err)
 			}
 			printTable(status)
+		case remove:
+			log.Infof("remove %s", flag.Args()[0])
+			if err := cli.RemoveProcess(flag.Args()[0]); err != nil {
+				log.Fatalf("remove error %s", err)
+			}
+			status, err := cli.AllStatus()
+			if err != nil {
+				log.Fatalf("all status %s", err)
+			}
+			printTable(status)
+		case status:
+			{
+
+				status, err := cli.AllStatus()
+				if err != nil {
+					log.Fatalf("all status %s", err)
+				}
+				printTable(status)
+				// log.Infof("all status %s", status)
+			}
 		default:
 			flag.Usage()
 		}

@@ -2,7 +2,6 @@ package process
 
 import (
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,15 +11,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fatih/structs"
 	"github.com/hysios/log"
+	"github.com/hysios/utils/convert"
 	"github.com/shirou/gopsutil/process"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/natefinch/lumberjack.v2"
+	"gopkg.in/yaml.v3"
 )
 
 type Manager struct {
 	WorkerDir  string
 	ConfigFile string
+	Echo       bool
 
 	done        chan bool
 	processExit chan *Process
@@ -32,11 +35,12 @@ type ManagerConfig struct {
 	Filename  string
 	WorkerDir string
 	Procs     []Process
+	Echo      bool
 }
 
 var (
-	DefaultConfig  = ManagerConfig{Filename: "process.yaml", WorkerDir: "./run"}
-	DefaultManager = NewManager(&DefaultConfig)
+	DefaultConfig = ManagerConfig{Filename: "process.yaml", WorkerDir: "./run"}
+	// DefaultManager = NewManager(&DefaultConfig)
 )
 
 func SplitCmd(cmd string) []string {
@@ -52,6 +56,7 @@ func NewManager(cfg *ManagerConfig) *Manager {
 	m := &Manager{
 		ConfigFile:  cfg.Filename,
 		WorkerDir:   cfg.WorkerDir,
+		Echo:        cfg.Echo,
 		done:        make(chan bool),
 		processExit: make(chan *Process),
 		processStop: make(chan *Process),
@@ -65,9 +70,35 @@ func NewManager(cfg *ManagerConfig) *Manager {
 }
 
 // StartProcess starts a process
-func (m *Manager) StartProcess(name string, args []string, env []string, dir string) (*Process, error) {
+func (m *Manager) StartProcess(name string, binary string, args []string, env []string, dir string) (*Process, error) {
+	// var (
+	// 	// cwd, _  = os.Getwd()
+	// 	fullbin string
+	// 	err     error
+	// )
+
+	// if IsRelPath(name) {
+	// 	fullbin, err = filepath.Abs(name)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// } else {
+	// 	fullbin = name
+	// }
+
+	// name = filepath.Base(name)
+
+	// if err != nil {
+	// 	return nil, err
+	// }
+	var fullbin string
+	if len(binary) > 0 {
+		fullbin = binary
+	} else {
+		fullbin = name
+	}
 	var (
-		cmd     = exec.Command(name, args...)
+		cmd     = exec.Command(fullbin, args...)
 		fulldir = path.Join(m.WorkerDir, dir)
 	)
 	log.Debugf("fulldir %s", fulldir)
@@ -87,7 +118,8 @@ func (m *Manager) StartProcess(name string, args []string, env []string, dir str
 	}
 
 	m.process.Store(name, process)
-	return process, nil
+
+	return process, m.SaveConfig()
 }
 
 // RestartProcess restarts a process
@@ -124,14 +156,112 @@ func Clone(cmd *exec.Cmd) *exec.Cmd {
 
 // LoadProcesses load process in config file
 func (m *Manager) LoadProcesses(filename string) error {
-	// yaml.
+	f, err := os.OpenFile(filename, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		return err
+	}
 
-	return errors.New("nonimplement")
+	var dec = yaml.NewDecoder(f)
+	var mm = make(map[string]interface{})
+	if err = dec.Decode(&mm); err != nil {
+		return err
+	}
+
+	if workdir, ok := mm["WorkerDir"].(string); ok {
+		m.WorkerDir = workdir
+	}
+
+	if configFile, ok := mm["ConfigFile"].(string); ok {
+		m.ConfigFile = configFile
+	}
+
+	if procs, ok := mm["Procs"].([]interface{}); ok {
+		for _, pm := range procs {
+			if mmm, ok := pm.(map[string]interface{}); ok {
+				log.Infof("pm %v", mmm)
+				proc := m.loadProc(mmm)
+				if proc == nil {
+					log.Errorf("load process is nil")
+					continue
+				}
+
+				proc, err := m.runProcess(proc)
+				if err != nil {
+					log.Errorf("run process %s error %s", proc.Name, err)
+					continue
+				}
+				m.process.Store(proc.Name, proc)
+				// m.
+			}
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) loadProc(pm map[string]interface{}) *Process {
+	var (
+		name   string
+		binary string
+		args   []string
+		env    []string
+		dir    string
+		ok     bool
+	)
+
+	if name, ok = pm["Name"].(string); !ok {
+		return nil
+	}
+
+	if binary, ok = pm["Binary"].(string); !ok {
+		return nil
+	}
+
+	args, ok = convert.SliceString(pm["Args"])
+	env, ok = convert.SliceString(pm["Env"])
+	dir, ok = pm["Dir"].(string)
+
+	var (
+		cmd     = exec.Command(binary, args...)
+		fulldir = path.Join(m.WorkerDir, dir)
+	)
+	log.Debugf("fulldir %s", fulldir)
+	os.MkdirAll(fulldir, 0755)
+
+	cmd.Dir = fulldir
+	if env == nil {
+		cmd.Env = os.Environ()
+	} else {
+		cmd.Env = env
+	}
+
+	return NewProcess(name, cmd, nil)
 }
 
 // SaveConfig save all processes config to a file
 func (m *Manager) SaveConfig() error {
-	panic("nonimplement")
+	if len(m.ConfigFile) == 0 {
+		return nil
+	}
+
+	var (
+		mm    = structs.Map(m)
+		procs = make([]interface{}, 0)
+	)
+	m.process.Range(func(key, value interface{}) bool {
+		proc := value.(*Process)
+		procs = append(procs, structs.Map(proc))
+		return true
+	})
+
+	mm["Procs"] = procs
+	f, err := os.OpenFile(m.ConfigFile, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	enc := yaml.NewEncoder(f)
+	return enc.Encode(mm)
 }
 
 type inputReader struct {
@@ -157,24 +287,14 @@ func (m *Manager) runProcess(pproc *Process) (*Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	// var inputExit = make(chan bool)
 
-	// var b = new(bytes.Buffer)
-	// cmd.Stdin = bufio.NewReader(b)
-	// b.WriteString("\n")
-
-	// cmd.Stdin = &inputReader{exit: inputExit}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
 	go func() {
 		io.WriteString(stdin, "\n")
-		// io.WriteString(stdin, "blob\n")
-		// io.WriteString(stdin, "booo\n")
 	}()
-	// defer stdin.Close()
-	// log.Infof("stdin %v", stdin)
 
 	if err = cmd.Start(); err != nil {
 		return nil, err
@@ -185,7 +305,10 @@ func (m *Manager) runProcess(pproc *Process) (*Process, error) {
 		log.Infof("create '%s' out file to %s", name, cmd.Dir+"/"+name+".out")
 		var logger = m.createLogger(cmd.Dir, name+".out")
 		defer logger.Close()
-		w := io.MultiWriter(logger, os.Stdout)
+		var w io.Writer = logger
+		if m.Echo {
+			w = io.MultiWriter(logger, os.Stdout)
+		}
 		_, err := io.Copy(w, stdout)
 		return err
 	})
@@ -194,14 +317,13 @@ func (m *Manager) runProcess(pproc *Process) (*Process, error) {
 		log.Infof("create '%s' err file to %s", name, cmd.Dir+"/"+name+".err")
 		var logger = m.createLogger(cmd.Dir, name+".err")
 		defer logger.Close()
-		w := io.MultiWriter(logger, os.Stdout)
+		var w io.Writer = logger
+		if m.Echo {
+			w = io.MultiWriter(logger, os.Stdout)
+		}
 		_, err := io.Copy(w, stderr)
 		return err
 	})
-
-	// g.Go(func() error {
-	// 	io.Copy(w, ioutil.Discard)
-	// })
 
 	proc, err := process.NewProcess(int32(cmd.Process.Pid))
 	if err != nil {
@@ -209,9 +331,6 @@ func (m *Manager) runProcess(pproc *Process) (*Process, error) {
 	}
 
 	pproc.Process = proc
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	err = m.createPidfile(cmd, cmd.Dir, name+".pid")
 	if err != nil {
@@ -277,6 +396,20 @@ func (m *Manager) StopProcess(name string) error {
 	}
 
 	return nil
+}
+
+// RemoveProcess removes a process
+func (m *Manager) RemoveProcess(name string) error {
+	proc, ok := m.getProcess(name)
+	if !ok {
+		return ErrProcessNotFound
+	}
+	m.processStop <- proc
+	proc.daemon.Store(0)
+	m.process.Delete(proc.Name)
+	proc.cmd.Process.Signal(os.Interrupt)
+
+	return m.SaveConfig()
 }
 
 func (m *Manager) getProcess(name string) (*Process, bool) {
@@ -349,4 +482,8 @@ func (m *Manager) Stop() error {
 
 func init() {
 	gob.Register(new(Process))
+}
+
+func IsRelPath(p string) bool {
+	return strings.HasPrefix(p, ".")
 }
