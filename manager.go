@@ -469,6 +469,16 @@ func (m *Manager) Run() error {
 			log.Infof("stop process %s", process.Name)
 			// m.process.Delete(process.Name)
 			// process.daemon.Store(0)
+		case <-time.After(10 * time.Second):
+			m.process.Range(func(key, value interface{}) bool {
+				if proc, ok := value.(*Process); ok {
+					switch proc.Status() {
+					case "E":
+						m.RestartProcess(proc.Name)
+					}
+				}
+				return true
+			})
 		case <-m.done:
 			return io.EOF
 		}
